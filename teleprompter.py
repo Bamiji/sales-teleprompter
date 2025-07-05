@@ -11,6 +11,7 @@ from streamlit_webrtc import WebRtcMode, webrtc_streamer
 from utils import suggest, transcribe
 
 LLM_INTERVAL = 15  # seconds
+FRAME_MIN = 60 # transcription speed increases as value goes down, but accuracy suffers
 
 TRANSCRIPT_HISTORY_KEY = "transcript_history"
 TRANSCRIPT_CONTEXT_KEY = "transcript_context"
@@ -79,6 +80,7 @@ async def main():
             await asyncio.sleep(1)
 
     async def teleprompter_loop():
+        audio_frames = []
         last_llm_time = time.time()
         last_llm_index = 0
 
@@ -87,32 +89,37 @@ async def main():
                 status.write("Microphone is ON")
 
                 try:
-                    audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=0.5)
+                    audio_frames.extend(webrtc_ctx.audio_receiver.get_frames())
                 except queue.Empty:
                     continue
-
-                sound_chunk = pydub.AudioSegment.empty()
-                for audio_frame in audio_frames:
-                    sound = pydub.AudioSegment(
-                        data=audio_frame.to_ndarray().tobytes(),
-                        sample_width=audio_frame.format.bytes,
-                        frame_rate=audio_frame.sample_rate,
-                        channels=len(audio_frame.layout.channels),
-                    )
-                    sound_chunk += sound
-
-                if len(sound_chunk) > 0:
-                    text = await asyncio.to_thread(transcribe, sound_chunk)
-
-                    if text:
-                        timestamped_text = (  # e.g. Jun 30 2025, 02:49AM
-                            datetime.now().strftime("**%b %d %Y, %I:%M%p**: ") + text
+                
+                # send audio frames at minimum to improve transcription accuracy
+                if len(audio_frames) > FRAME_MIN:
+                    sound_chunk = pydub.AudioSegment.empty()
+                    for audio_frame in audio_frames:
+                        sound = pydub.AudioSegment(
+                            data=audio_frame.to_ndarray().tobytes(),
+                            sample_width=audio_frame.format.bytes,
+                            frame_rate=audio_frame.sample_rate,
+                            channels=len(audio_frame.layout.channels),
                         )
-                        transcript.write(timestamped_text)
-                        st.session_state[TRANSCRIPT_HISTORY_KEY].append(timestamped_text)
+                        sound_chunk += sound
+                    audio_frames = []
+                
 
-                        st.session_state[TRANSCRIPT_CONTEXT_KEY] += f"{text}\n"
+                    if len(sound_chunk) > 0:
+                        text = await asyncio.to_thread(transcribe, sound_chunk)
 
+                        if text:
+                            timestamped_text = (  # e.g. Jun 30 2025, 02:49AM
+                                datetime.now().strftime("**%b %d %Y, %I:%M%p**: ") + text
+                            )
+                            transcript.write(timestamped_text)
+                            st.session_state[TRANSCRIPT_HISTORY_KEY].append(timestamped_text)
+
+                            st.session_state[TRANSCRIPT_CONTEXT_KEY] += f"{text}\n"
+
+                # send pending context to LLM
                 if (now := time.time()) - last_llm_time > LLM_INTERVAL:
                     current_context = st.session_state[TRANSCRIPT_CONTEXT_KEY][
                         last_llm_index:

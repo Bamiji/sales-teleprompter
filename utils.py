@@ -1,12 +1,8 @@
-import json
 import tempfile
 
-from deepgram import (
-    DeepgramClient,
-    PrerecordedOptions,
-)
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai.chat_models import ChatOpenAI
+from requests import Session
 
 import config
 
@@ -28,6 +24,17 @@ model = ChatOpenAI(
     temperature=1,
 )
 
+dg_session = Session()
+dg_session.headers.update(
+    {"Authorization": f"Token {config.DEEPGRAM_API_KEY}", "Content-Type": "audio/*"}
+)
+dg_session.params.update(
+    {
+        "model": "nova-3",
+        "smart_format": "true",
+    }
+)
+
 
 def suggest(context):
     prompt = template.invoke({"context": context})
@@ -39,23 +46,15 @@ def transcribe(audio_segment):
     with tempfile.NamedTemporaryFile() as tmpfile:
         buffer_data = audio_segment.export(tmpfile.name, format="mp3").read()
 
-        deepgram = DeepgramClient(api_key=config.DEEPGRAM_API_KEY)
-
-        payload = {
-            "buffer": buffer_data,
-        }
-        options = PrerecordedOptions(
-            model="nova-3",
-            smart_format=True,
+        resp = dg_session.post(
+            "https://api.deepgram.com/v1/listen", data=buffer_data
         )
-
         try:
-            response = deepgram.listen.rest.v("1").transcribe_file(payload, options)
+            resp.raise_for_status()
         except Exception:
             return ""
-
-        response = json.loads(response.to_json())
-        transcript = response["results"]["channels"][0]["alternatives"][0][
+        
+        transcript = resp.json()["results"]["channels"][0]["alternatives"][0][
             "paragraphs"
         ]["transcript"]
 
