@@ -1,5 +1,4 @@
 import json
-import os
 import tempfile
 
 from deepgram import (
@@ -37,13 +36,10 @@ def suggest(context):
 
 
 def transcribe(audio_segment):
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmpfile:
-        audio_segment.export(tmpfile.name, format="wav")
+    with tempfile.NamedTemporaryFile() as tmpfile:
+        buffer_data = audio_segment.export(tmpfile.name, format="mp3").read()
 
         deepgram = DeepgramClient(api_key=config.DEEPGRAM_API_KEY)
-
-        with open(tmpfile.name, "rb") as file:
-            buffer_data = file.read()
 
         payload = {
             "buffer": buffer_data,
@@ -62,8 +58,5 @@ def transcribe(audio_segment):
         transcript = response["results"]["channels"][0]["alternatives"][0][
             "paragraphs"
         ]["transcript"]
-
-        tmpfile.close()
-        os.remove(tmpfile.name)
 
         return transcript.strip()

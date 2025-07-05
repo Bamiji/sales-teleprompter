@@ -13,6 +13,7 @@ from utils import suggest, transcribe
 LLM_INTERVAL = 15  # seconds
 
 TRANSCRIPT_HISTORY_KEY = "transcript_history"
+TRANSCRIPT_CONTEXT_KEY = "transcript_context"
 AI_TIPS_HISTORY_KEY = "ai_tips_history"
 PAUSED_TIME_KEY = "paused_time"
 
@@ -52,6 +53,9 @@ def load_history(key, container):
 load_history(TRANSCRIPT_HISTORY_KEY, transcript)
 load_history(AI_TIPS_HISTORY_KEY, ai_tips)
 
+if TRANSCRIPT_CONTEXT_KEY not in st.session_state:
+    st.session_state[TRANSCRIPT_CONTEXT_KEY] = ""
+
 if PAUSED_TIME_KEY not in st.session_state:
     st.session_state[PAUSED_TIME_KEY] = 0
 else:
@@ -75,7 +79,6 @@ async def main():
             await asyncio.sleep(1)
 
     async def teleprompter_loop():
-        transcript_context = ""
         last_llm_time = time.time()
         last_llm_index = 0
 
@@ -84,7 +87,7 @@ async def main():
                 status.write("Microphone is ON")
 
                 try:
-                    audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=1)
+                    audio_frames = webrtc_ctx.audio_receiver.get_frames(timeout=0.5)
                 except queue.Empty:
                     continue
 
@@ -106,20 +109,20 @@ async def main():
                             datetime.now().strftime("**%b %d %Y, %I:%M%p**: ") + text
                         )
                         transcript.write(timestamped_text)
-                        st.session_state[TRANSCRIPT_HISTORY_KEY].append(
-                            timestamped_text
-                        )
+                        st.session_state[TRANSCRIPT_HISTORY_KEY].append(timestamped_text)
 
-                        transcript_context += f"{text}\n"
+                        st.session_state[TRANSCRIPT_CONTEXT_KEY] += f"{text}\n"
 
                 if (now := time.time()) - last_llm_time > LLM_INTERVAL:
-                    current_context = transcript_context[last_llm_index:]
+                    current_context = st.session_state[TRANSCRIPT_CONTEXT_KEY][
+                        last_llm_index:
+                    ]
                     if current_context:
                         llm_response = await asyncio.to_thread(suggest, current_context)
                         ai_tips.write(llm_response)
                         st.session_state[AI_TIPS_HISTORY_KEY].append(llm_response)
                         last_llm_time = now
-                        last_llm_index = len(transcript_context)
+                        last_llm_index = len(st.session_state[TRANSCRIPT_CONTEXT_KEY])
             else:
                 if (
                     st.session_state[TRANSCRIPT_HISTORY_KEY]
